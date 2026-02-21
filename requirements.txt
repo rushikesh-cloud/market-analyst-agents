@@ -4,6 +4,11 @@ python-dotenv
 langchain
 langchain-community
 langchain-openai
+langchain-text-splitters
+azure-ai-documentintelligence
+psycopg[binary]
+pgvector
+python-multipart
 tavily-python
 yfinance
 pandas

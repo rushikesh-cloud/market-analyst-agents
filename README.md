@@ -24,6 +24,10 @@ AZURE_OPENAI_ENDPOINT=
 AZURE_OPENAI_API_KEY=
 AZURE_OPENAI_DEPLOYMENT=
 AZURE_OPENAI_API_VERSION=2024-02-01
+AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=
+AZURE_DOCUMENT_INTELLIGENCE_KEY=
+PGVECTOR_CONNECTION_STRING=postgresql+psycopg://user:password@host:5432/dbname
 TAVILY_API_KEY=
 ```
 
@@ -34,3 +38,12 @@ uvicorn app.main:app --reload --app-dir backend
 
 ### 5) Run notebook
 Open `notebooks/agent_playground.ipynb` and execute the cells.
+
+### 6) Ingest fundamentals (PDF -> pgvector)
+```
+python scripts/ingest_fundamentals.py --pdf "data/raw/ACME_2023.pdf" --company "ACME" --year 2023
+```
+Ensure the target Postgres database has the `pgvector` extension installed:
+```
+CREATE EXTENSION IF NOT EXISTS vector;
+```
