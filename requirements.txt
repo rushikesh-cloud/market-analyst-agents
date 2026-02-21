@@ -1,0 +1,11 @@
+﻿fastapi
+uvicorn
+python-dotenv
+langchain
+langchain-community
+langchain-openai
+tavily-python
+yfinance
+pandas
+mplfinance
+pandas_ta
