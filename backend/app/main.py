@@ -11,12 +11,30 @@ from dotenv import load_dotenv
 from app.agents.news.web_search_agent import build_web_search_agent
 from app.agents.technical.technical_chart_agent import analyze_stock_technical
 from app.agents.fundamental.fundamental_agent import analyze_fundamentals
+from app.agents.supervisor.supervisor_agent import analyze_market_supervised
 from app.services.document_ingestion import ingest_pdf_to_pgvector
+
+
+
 
 app = FastAPI(title="Market Analyst Agent API")
 
-# Load env vars from .env at app startup
-load_dotenv()
+# Load env vars from .env at app startup.
+# Support running uvicorn from repo root or from backend/ directory.
+_repo_root = Path(__file__).resolve().parents[2]
+_env_candidates = [
+    _repo_root / ".env",
+    Path.cwd() / ".env",
+]
+
+for _env_path in _env_candidates:
+    if _env_path.exists():
+        load_dotenv(dotenv_path=_env_path, override=False)
+        break
+else:
+    load_dotenv(override=False)
+
+print(os.environ)
 
 _web_search_agent: Optional[Any] = None
 
@@ -72,6 +90,26 @@ class FundamentalResponse(BaseModel):
     sources: list[dict]
 
 
+class SupervisorRequest(BaseModel):
+    symbol: str = Field(..., min_length=1)
+    company: str = Field(..., min_length=1)
+    fundamental_question: Optional[str] = None
+    news_query: Optional[str] = None
+    technical_period: str = "3mo"
+    technical_interval: str = "1d"
+    collection: str = "fundamental_docs"
+    top_k: int = 8
+
+
+class SupervisorResponse(BaseModel):
+    symbol: str
+    company: str
+    technical: Dict[str, Any]
+    fundamental: Dict[str, Any]
+    news: Dict[str, Any]
+    synthesis: Dict[str, Any]
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -122,6 +160,31 @@ def run_fundamental(payload: FundamentalRequest) -> FundamentalResponse:
         company=result.company,
         answer=result.answer,
         sources=result.sources,
+    )
+
+
+@app.post("/agents/supervisor", response_model=SupervisorResponse)
+def run_supervisor(payload: SupervisorRequest) -> SupervisorResponse:
+    """
+    Supervisor orchestration over technical + fundamental + news agents.
+    """
+    result = analyze_market_supervised(
+        symbol=payload.symbol.strip(),
+        company=payload.company.strip(),
+        fundamental_question=payload.fundamental_question.strip() if payload.fundamental_question else None,
+        news_query=payload.news_query.strip() if payload.news_query else None,
+        technical_period=payload.technical_period,
+        technical_interval=payload.technical_interval,
+        collection_name=payload.collection,
+        top_k=payload.top_k,
+    )
+    return SupervisorResponse(
+        symbol=result.symbol,
+        company=result.company,
+        technical=result.technical,
+        fundamental=result.fundamental,
+        news=result.news,
+        synthesis=result.synthesis,
     )
 
 

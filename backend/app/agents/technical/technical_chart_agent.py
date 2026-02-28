@@ -87,7 +87,7 @@ def _image_to_data_url(path: Path) -> str:
 def _vision_analyze(image_path: Path, symbol: str) -> str:
     llm = AzureChatOpenAI(
         azure_endpoint=_env("AZURE_OPENAI_ENDPOINT"),
-        api_key=_env("AZURE_OPENAI_API_KEY"),
+        api_key=_env("AZURE_OPENAI_KEY"),
         azure_deployment=_env("AZURE_OPENAI_DEPLOYMENT"),
         api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
         temperature=0.2,

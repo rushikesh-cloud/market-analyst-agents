@@ -12,6 +12,8 @@ Build a multi-agent market analyst system with a supervisor agent orchestrating 
   - Sectioned report: Technical / Fundamental / News
   - Final 6-month growth rating (1–10) with rationale.
 
+
+
 ## Implementation Phases
 1. **Backend (FastAPI)**
    - Core agent orchestration

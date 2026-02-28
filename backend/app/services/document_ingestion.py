@@ -76,7 +76,7 @@ def split_markdown_into_chunks(markdown: str) -> List[Document]:
 def _build_embeddings(deployment: Optional[str] = None) -> AzureOpenAIEmbeddings:
     deployment = deployment or _env("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT")
     endpoint = os.getenv("AZURE_OPENAI_EMBEDDINGS_ENDPOINT") or _env("AZURE_OPENAI_ENDPOINT")
-    api_key = os.getenv("AZURE_OPENAI_EMBEDDINGS_API_KEY") or _env("AZURE_OPENAI_API_KEY")
+    api_key = os.getenv("AZURE_OPENAI_EMBEDDINGS_API_KEY") or _env("AZURE_OPENAI_KEY")
     return AzureOpenAIEmbeddings(
         azure_endpoint=endpoint,
         api_key=api_key,

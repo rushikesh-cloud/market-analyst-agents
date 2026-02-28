@@ -28,7 +28,7 @@ def build_web_search_agent() :
 
     Required env vars:
     - AZURE_OPENAI_ENDPOINT
-    - AZURE_OPENAI_API_KEY
+    - AZURE_OPENAI_KEY
     - AZURE_OPENAI_DEPLOYMENT
     - AZURE_OPENAI_API_VERSION (optional; defaults to 2024-02-01)
     - TAVILY_API_KEY
@@ -36,7 +36,7 @@ def build_web_search_agent() :
 
     llm = AzureChatOpenAI(
         azure_endpoint=_env("AZURE_OPENAI_ENDPOINT"),
-        api_key=_env("AZURE_OPENAI_API_KEY"),
+        api_key=_env("AZURE_OPENAI_KEY"),
         azure_deployment=_env("AZURE_OPENAI_DEPLOYMENT"),
         api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
         temperature=0.2,

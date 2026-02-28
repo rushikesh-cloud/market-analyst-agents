@@ -1,0 +1,162 @@
+<mxfile host="app.diagrams.net" modified="2026-02-27T00:00:00.000Z" agent="codex" version="24.7.17">
+  <diagram id="runtime-flow" name="Runtime Flow">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="u" value="User" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="180" width="110" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="fe" value="Next.js Frontend" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="220" y="180" width="150" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="api" value="FastAPI Backend" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="440" y="180" width="150" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="sup" value="Supervisor Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="660" y="180" width="150" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ta" value="Technical Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="900" y="70" width="150" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="fa" value="Fundamental Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="900" y="180" width="150" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="na" value="News Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="900" y="290" width="150" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="mkt" value="Market Data Provider" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="40" width="190" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="vis" value="Vision Model" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="95" width="190" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="vdb" value="Postgres + pgvector" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="170" width="190" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="tv" value="Tavily API" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="265" width="190" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="aoai" value="Azure OpenAI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="325" width="190" height="45" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="out" value="Sectioned Report&lt;br&gt;6-Month Rating (1-10)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="660" y="320" width="220" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" edge="1" parent="1" source="u" target="fe" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="POST /analyze, /chat" edge="1" parent="1" source="fe" target="api" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="api" target="sup" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="sup" target="ta" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="sup" target="fa" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="sup" target="na" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e7" edge="1" parent="1" source="ta" target="mkt" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="ta" target="vis" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="vis" target="aoai" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="fa" target="vdb" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="fa" target="aoai" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="na" target="tv" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="na" target="aoai" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e14" edge="1" parent="1" source="sup" target="out" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e15" edge="1" parent="1" source="api" target="fe" style="endArrow=classic;html=1;rounded=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e16" edge="1" parent="1" source="fe" target="u" style="endArrow=classic;html=1;rounded=0;dashed=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="ingestion-flow" name="Document Ingestion">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="pdf" value="Annual Report PDFs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="70" y="170" width="170" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="di" value="Azure Document Intelligence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="300" y="170" width="210" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="md" value="Markdown Output" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="570" y="170" width="170" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="chunk" value="LangChain Markdown Header Splitter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="790" y="170" width="250" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="meta" value="Metadata&lt;br&gt;company, doc_type, year" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="95" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="vdb2" value="Postgres + pgvector" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="215" width="220" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="fa2" value="Fundamental Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="330" width="220" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="sup2" value="Supervisor Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="430" width="220" height="55" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="i1" edge="1" parent="1" source="pdf" target="di" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="i2" edge="1" parent="1" source="di" target="md" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="i3" edge="1" parent="1" source="md" target="chunk" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="i4" edge="1" parent="1" source="chunk" target="meta" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="i5" edge="1" parent="1" source="chunk" target="vdb2" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="i6" edge="1" parent="1" source="meta" target="vdb2" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="i7" edge="1" parent="1" source="vdb2" target="fa2" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="i8" edge="1" parent="1" source="fa2" target="sup2" style="endArrow=classic;html=1;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
