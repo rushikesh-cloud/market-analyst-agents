@@ -20,6 +20,7 @@ from app.agents.supervisor.supervisor_agent import analyze_market_supervised, st
 from app.agents.technical.technical_chart_agent import analyze_stock_technical
 from app.services.agent_run_logger import log_agent_run
 from app.services.document_ingestion import ingest_pdf_to_pgvector
+from app.services.query_guardrail import validate_market_query
 from app.services.vector_document_registry import delete_ingested_document, list_ingested_documents
 
 app = FastAPI(title="Market Analyst Agent API")
@@ -449,6 +450,38 @@ def _log_agent_run_safe(
         logger.exception("Failed to log agent run for %s: %s", agent_name, exc)
 
 
+def _enforce_market_guardrail(
+    *,
+    query: str,
+    agent_name: str,
+    company: Optional[str] = None,
+    symbol: Optional[str] = None,
+) -> None:
+    try:
+        decision = validate_market_query(
+            query=query,
+            company=company,
+            symbol=symbol,
+            agent_name=agent_name,
+        )
+    except Exception as exc:
+        logger.exception("Guardrail check failed for %s: %s", agent_name, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Guardrail validation is temporarily unavailable. Please retry.",
+        ) from exc
+
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "out_of_scope_query",
+                "message": "Request must be related to company market/investment analysis.",
+                "reason": decision.reason,
+            },
+        )
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -463,6 +496,7 @@ def run_web_search(payload: WebSearchRequest) -> WebSearchResponse:
     query = payload.messages[-1].strip()
     if not query:
         raise HTTPException(status_code=422, detail="messages must include a non-empty final query")
+    _enforce_market_guardrail(query=query, agent_name="web_search")
 
     agent = get_web_search_agent()
     result = agent.invoke(_messages_payload(query))
@@ -482,6 +516,7 @@ def run_web_search_stream(payload: WebSearchRequest) -> StreamingResponse:
     query = payload.messages[-1].strip()
     if not query:
         raise HTTPException(status_code=422, detail="messages must include a non-empty final query")
+    _enforce_market_guardrail(query=query, agent_name="web_search_stream")
 
     def event_stream():
         agent = get_web_search_agent()
@@ -521,6 +556,15 @@ def run_technical(payload: TechnicalRequest) -> TechnicalResponse:
     Minimal endpoint to exercise the technical analysis agent.
     Expects: {"symbol": "AAPL", "period": "3mo", "interval": "1d"}
     """
+    technical_intent = (
+        f"Technical stock market analysis for ticker {payload.symbol} "
+        f"with period {payload.period} and interval {payload.interval}."
+    )
+    _enforce_market_guardrail(
+        query=technical_intent,
+        agent_name="technical",
+        symbol=payload.symbol,
+    )
     result = analyze_stock_technical(payload.symbol, period=payload.period, interval=payload.interval)
     result_payload = {
         "symbol": result.symbol,
@@ -546,6 +590,16 @@ def run_technical(payload: TechnicalRequest) -> TechnicalResponse:
 
 @app.post("/agents/technical/stream")
 def run_technical_stream(payload: TechnicalRequest) -> StreamingResponse:
+    technical_intent = (
+        f"Technical stock market analysis for ticker {payload.symbol} "
+        f"with period {payload.period} and interval {payload.interval}."
+    )
+    _enforce_market_guardrail(
+        query=technical_intent,
+        agent_name="technical_stream",
+        symbol=payload.symbol,
+    )
+
     def event_stream():
         yield _ndjson_line("started", {"symbol": payload.symbol, "period": payload.period, "interval": payload.interval})
         yield _ndjson_line("progress", {"phase": "fetch_and_indicator_calc"})
@@ -580,6 +634,13 @@ def run_fundamental(payload: FundamentalRequest) -> FundamentalResponse:
     Agentic RAG over company-specific annual report chunks in pgvector.
     mode=auto -> general if no question, qa otherwise.
     """
+    guardrail_query = payload.question or f"Fundamental market analysis for {payload.company}"
+    _enforce_market_guardrail(
+        query=guardrail_query,
+        agent_name="fundamental",
+        company=payload.company,
+    )
+
     result = analyze_fundamentals(
         company=payload.company,
         question=payload.question,
@@ -611,6 +672,13 @@ def run_fundamental(payload: FundamentalRequest) -> FundamentalResponse:
 
 @app.post("/agents/fundamental/stream")
 def run_fundamental_stream(payload: FundamentalRequest) -> StreamingResponse:
+    guardrail_query = payload.question or f"Fundamental market analysis for {payload.company}"
+    _enforce_market_guardrail(
+        query=guardrail_query,
+        agent_name="fundamental_stream",
+        company=payload.company,
+    )
+
     def event_stream():
         yield _ndjson_line(
             "started",
@@ -655,6 +723,18 @@ def run_supervisor(payload: SupervisorRequest) -> SupervisorResponse:
     """
     Supervisor orchestration over technical + fundamental + news agents.
     """
+    guardrail_query = (
+        f"Company={payload.company}; Symbol={payload.symbol}; "
+        f"FundamentalFocus={payload.fundamental_question or ''}; "
+        f"NewsFocus={payload.news_query or ''}"
+    )
+    _enforce_market_guardrail(
+        query=guardrail_query,
+        agent_name="supervisor",
+        company=payload.company,
+        symbol=payload.symbol,
+    )
+
     result = analyze_market_supervised(
         symbol=payload.symbol,
         company=payload.company,
@@ -693,6 +773,18 @@ def run_supervisor(payload: SupervisorRequest) -> SupervisorResponse:
 
 @app.post("/agents/supervisor/stream")
 def run_supervisor_stream(payload: SupervisorRequest) -> StreamingResponse:
+    guardrail_query = (
+        f"Company={payload.company}; Symbol={payload.symbol}; "
+        f"FundamentalFocus={payload.fundamental_question or ''}; "
+        f"NewsFocus={payload.news_query or ''}"
+    )
+    _enforce_market_guardrail(
+        query=guardrail_query,
+        agent_name="supervisor_stream",
+        company=payload.company,
+        symbol=payload.symbol,
+    )
+
     def event_stream():
         yield _ndjson_line(
             "started",

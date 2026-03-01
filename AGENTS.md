@@ -42,6 +42,8 @@ Core vars used across the codebase:
 - `AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT`
 - `AZURE_OPENAI_EMBEDDINGS_ENDPOINT` (optional override)
 - `AZURE_OPENAI_EMBEDDINGS_API_KEY` (optional override)
+- `AZURE_OPENAI_GUARDRAIL_DEPLOYMENT` (optional, recommended smaller/faster model deployment for query guardrails)
+- `AZURE_OPENAI_GUARDRAIL_API_VERSION` (optional override for guardrail model API version)
 - `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`
 - `AZURE_DOCUMENT_INTELLIGENCE_KEY`
 - `PGVECTOR_CONNECTION_STRING`
@@ -56,10 +58,17 @@ Responsibilities:
 - Creates FastAPI app
 - Defines strict request/response schemas (Pydantic)
 - Exposes agent endpoints
+- Enforces guardrail validation before all agent invocations (direct + stream)
 - Normalizes/validates inputs before calling agents
 - Enables CORS for local frontend origins (`localhost:3000`, `127.0.0.1:3000`)
 - Serves generated technical chart files from `/static` (mapped to local `data/`)
 - Exposes NDJSON streaming endpoints for live agent execution updates
+
+Guardrail behavior:
+- Service file: `backend/app/services/query_guardrail.py`
+- Uses Azure OpenAI chat classification (prefer small deployment via `AZURE_OPENAI_GUARDRAIL_DEPLOYMENT`)
+- Allows only market/investment/company-analysis requests
+- Rejects out-of-scope queries with HTTP `422` and code `out_of_scope_query`
 
 Endpoints:
 - `GET /health`
