@@ -21,6 +21,13 @@ from app.agents.technical.technical_chart_agent import analyze_stock_technical
 from app.services.agent_run_logger import log_agent_run
 from app.services.document_ingestion import ingest_pdf_to_pgvector
 from app.services.query_guardrail import validate_market_query
+from app.services.supervisor_chat_memory import (
+    close_supervisor_chat_memory,
+    create_supervisor_chat_session,
+    get_supervisor_chat_history,
+    list_supervisor_chat_sessions,
+    send_supervisor_chat_message,
+)
 from app.services.vector_document_registry import delete_ingested_document, list_ingested_documents
 
 app = FastAPI(title="Market Analyst Agent API")
@@ -271,6 +278,92 @@ class SupervisorResponse(BaseModel):
     synthesis: SupervisorSynthesis
 
 
+class SupervisorChatSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: Optional[str] = None
+    symbol: str = Field(..., min_length=1, max_length=20)
+    company: str = Field(..., min_length=1, max_length=100)
+    collection: str = Field(default="fundamental_docs", min_length=1)
+    technical_period: str = Field(default="3mo", min_length=2, max_length=10)
+    technical_interval: str = Field(default="1d", min_length=2, max_length=10)
+    top_k: int = Field(default=8, ge=1, le=25)
+
+    @field_validator("symbol")
+    @classmethod
+    def _normalize_chat_symbol(cls, value: str) -> str:
+        symbol = value.strip().upper()
+        if not symbol:
+            raise ValueError("symbol must be non-empty")
+        return symbol
+
+    @field_validator("company")
+    @classmethod
+    def _normalize_chat_company(cls, value: str) -> str:
+        company = value.strip().upper()
+        if not company:
+            raise ValueError("company must be non-empty")
+        return company
+
+    @field_validator("title")
+    @classmethod
+    def _normalize_chat_title(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class SupervisorChatSessionItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    title: str
+    symbol: str
+    company: str
+    collection: str
+    technical_period: str
+    technical_interval: str
+    top_k: int
+    created_at: str
+    updated_at: str
+
+
+class SupervisorChatSessionsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[SupervisorChatSessionItem]
+
+
+class SupervisorChatMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class SupervisorChatHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session: SupervisorChatSessionItem
+    messages: list[SupervisorChatMessage]
+
+
+class SupervisorChatTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(..., min_length=1)
+
+    @field_validator("message")
+    @classmethod
+    def _normalize_chat_message(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("message must be non-empty")
+        return cleaned
+
+
+class SupervisorChatTurnResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session: SupervisorChatSessionItem
+    assistant_message: str
+    messages: list[SupervisorChatMessage]
+
+
 def _messages_payload(query: str) -> dict[str, list[HumanMessage]]:
     return {"messages": [HumanMessage(content=query)]}
 
@@ -480,6 +573,26 @@ def _enforce_market_guardrail(
                 "reason": decision.reason,
             },
         )
+
+
+def _chat_session_payload(session: Any) -> SupervisorChatSessionItem:
+    return SupervisorChatSessionItem(
+        session_id=str(session.session_id),
+        title=str(session.title),
+        symbol=str(session.symbol),
+        company=str(session.company),
+        collection=str(session.collection_name),
+        technical_period=str(session.technical_period),
+        technical_interval=str(session.technical_interval),
+        top_k=int(session.top_k),
+        created_at=session.created_at.isoformat(),
+        updated_at=session.updated_at.isoformat(),
+    )
+
+
+@app.on_event("shutdown")
+def _close_supervisor_chat_memory() -> None:
+    close_supervisor_chat_memory()
 
 
 @app.get("/health")
@@ -821,6 +934,95 @@ def run_supervisor_stream(payload: SupervisorRequest) -> StreamingResponse:
         )
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
+
+@app.post("/agents/supervisor-chat/sessions", response_model=SupervisorChatSessionItem)
+def create_supervisor_chat_session_endpoint(
+    payload: SupervisorChatSessionCreateRequest,
+) -> SupervisorChatSessionItem:
+    guardrail_query = f"Supervisor chat analysis for {payload.company} ({payload.symbol})"
+    _enforce_market_guardrail(
+        query=guardrail_query,
+        agent_name="supervisor_chat_session_create",
+        company=payload.company,
+        symbol=payload.symbol,
+    )
+    session = create_supervisor_chat_session(
+        title=payload.title,
+        symbol=payload.symbol,
+        company=payload.company,
+        collection_name=payload.collection,
+        technical_period=payload.technical_period,
+        technical_interval=payload.technical_interval,
+        top_k=payload.top_k,
+    )
+    return _chat_session_payload(session)
+
+
+@app.get("/agents/supervisor-chat/sessions", response_model=SupervisorChatSessionsResponse)
+def list_supervisor_chat_sessions_endpoint(
+    limit: int = Query(default=100, ge=1, le=500),
+) -> SupervisorChatSessionsResponse:
+    sessions = list_supervisor_chat_sessions(limit=limit)
+    return SupervisorChatSessionsResponse(items=[_chat_session_payload(item) for item in sessions])
+
+
+@app.get("/agents/supervisor-chat/sessions/{session_id}", response_model=SupervisorChatHistoryResponse)
+def get_supervisor_chat_session_history_endpoint(session_id: str) -> SupervisorChatHistoryResponse:
+    try:
+        session, messages = get_supervisor_chat_history(session_id=session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    return SupervisorChatHistoryResponse(
+        session=_chat_session_payload(session),
+        messages=[
+            SupervisorChatMessage(role=message.role, content=message.content)
+            for message in messages
+        ],
+    )
+
+
+@app.post(
+    "/agents/supervisor-chat/sessions/{session_id}/messages",
+    response_model=SupervisorChatTurnResponse,
+)
+def send_supervisor_chat_message_endpoint(
+    session_id: str,
+    payload: SupervisorChatTurnRequest,
+) -> SupervisorChatTurnResponse:
+    try:
+        session, _ = get_supervisor_chat_history(session_id=session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    _enforce_market_guardrail(
+        query=payload.message,
+        agent_name="supervisor_chat_turn",
+        company=session.company,
+        symbol=session.symbol,
+    )
+    try:
+        result = send_supervisor_chat_message(session_id=session_id, message=payload.message)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    _log_agent_run_safe(
+        agent_name="supervisor_chat_turn",
+        company=result.session.company,
+        symbol=result.session.symbol,
+        input_query=payload.message,
+        input_messages_count=1,
+        result_payload={"assistant_message": result.assistant_message},
+    )
+    return SupervisorChatTurnResponse(
+        session=_chat_session_payload(result.session),
+        assistant_message=result.assistant_message,
+        messages=[
+            SupervisorChatMessage(role=message.role, content=message.content)
+            for message in result.messages
+        ],
+    )
 
 
 @app.get("/documents/ingested", response_model=IngestedDocumentsResponse)

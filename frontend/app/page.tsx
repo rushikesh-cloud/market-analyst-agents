@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-type TabId = "ingest" | "web" | "technical" | "fundamental" | "supervisor";
+type TabId = "ingest" | "web" | "technical" | "fundamental" | "supervisor" | "supervisor_chat";
 type SourceDoc = { company?: string | null; ticker?: string | null; year?: string | null; doc_type?: string | null; source_path?: string | null; chunk_index?: number | null };
 type TechnicalResponse = { symbol: string; image_path: string; summary: string; latest_values: Record<string, number> };
 type FundamentalResponse = { mode: string; company: string; answer: string; sources: SourceDoc[] };
@@ -13,6 +13,23 @@ type IngestionResponse = { company: string; ticker?: string | null; source_path:
 type IngestedDoc = { collection_name: string; source_path: string; company?: string | null; ticker?: string | null; doc_type?: string | null; year?: string | null; chunks_stored: number };
 type StreamEvent = { event: string; data: unknown };
 type InvokeMode = "direct" | "stream";
+type ChatRole = "user" | "assistant";
+type ChatMessage = { role: ChatRole; content: string };
+type ChatSession = {
+  session_id: string;
+  title: string;
+  symbol: string;
+  company: string;
+  collection: string;
+  technical_period: string;
+  technical_interval: string;
+  top_k: number;
+  created_at: string;
+  updated_at: string;
+};
+type ChatHistoryResponse = { session: ChatSession; messages: ChatMessage[] };
+type ChatSessionsResponse = { items: ChatSession[] };
+type ChatTurnResponse = { session: ChatSession; assistant_message: string; messages: ChatMessage[] };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 const tabs: Array<{ id: TabId; label: string }> = [
@@ -21,6 +38,7 @@ const tabs: Array<{ id: TabId; label: string }> = [
   { id: "technical", label: "Technical Agent" },
   { id: "fundamental", label: "Fundamental Agent" },
   { id: "supervisor", label: "Supervisor Agent" },
+  { id: "supervisor_chat", label: "Supervisor Chat" },
 ];
 
 async function req<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", payload?: unknown): Promise<T> {
@@ -164,6 +182,13 @@ export default function HomePage() {
   const [supRes, setSupRes] = useState<SupervisorResponse | null>(null);
   const [supEvents, setSupEvents] = useState<StreamEvent[]>([]);
   const [supMode, setSupMode] = useState<InvokeMode>("stream");
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [chatSessionId, setChatSessionId] = useState("");
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chatMessage, setChatMessage] = useState("Give me an updated 6-month investment view.");
+  const [chatNewTitle, setChatNewTitle] = useState("");
+  const [chatNewSymbol, setChatNewSymbol] = useState("AAPL");
+  const [chatNewCompany, setChatNewCompany] = useState("APPLE");
 
   const selectedDoc = useMemo(() => docs.find((d) => keyOf(d) === selectedDocId) ?? null, [docs, selectedDocId]);
   const fundamentalDocOptions = useMemo(() => {
@@ -199,10 +224,31 @@ export default function HomePage() {
     if (!selectedDocId && data.items.length) setSelectedDocId(keyOf(data.items[0]));
   }
 
+  async function refreshChatSessions() {
+    const data = await req<ChatSessionsResponse>("/agents/supervisor-chat/sessions");
+    setChatSessions(data.items);
+    if (!chatSessionId && data.items.length) setChatSessionId(data.items[0].session_id);
+  }
+
+  async function loadChatHistory(sessionId: string) {
+    if (!sessionId) {
+      setChatHistory([]);
+      return;
+    }
+    const data = await req<ChatHistoryResponse>(`/agents/supervisor-chat/sessions/${encodeURIComponent(sessionId)}`);
+    setChatHistory(data.messages);
+  }
+
   useEffect(() => {
     refreshDocs().catch((e) => setError(e instanceof Error ? e.message : "Unable to fetch docs"));
+    refreshChatSessions().catch((e) => setError(e instanceof Error ? e.message : "Unable to fetch chat sessions"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    loadChatHistory(chatSessionId).catch((e) => setError(e instanceof Error ? e.message : "Unable to fetch chat history"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatSessionId]);
 
   useEffect(() => {
     if (!fundamentalDocOptions.length) return;
@@ -225,12 +271,14 @@ export default function HomePage() {
       setSym(ticker);
       setSupSym(ticker);
       setIngTicker(ticker);
+      setChatNewSymbol(ticker);
     }
     if (company) {
       setFundCompany(company);
       setSupCompany(company);
       setIngCompany(company);
       setWebQuery(`${company} latest company news catalysts risks`);
+      setChatNewCompany(company);
     }
   }
 
@@ -358,6 +406,44 @@ export default function HomePage() {
     finally { setLoading(false); }
   }
 
+  async function onCreateChatSession(e: FormEvent) {
+    e.preventDefault(); setLoading(true); setError(null);
+    try {
+      const session = await req<ChatSession>("/agents/supervisor-chat/sessions", "POST", {
+        title: chatNewTitle.trim() || null,
+        symbol: chatNewSymbol.trim().toUpperCase(),
+        company: chatNewCompany.trim().toUpperCase(),
+        collection: "fundamental_docs",
+        technical_period: "3mo",
+        technical_interval: "1d",
+        top_k: 8,
+      });
+      await refreshChatSessions();
+      setChatSessionId(session.session_id);
+      setChatNewTitle("");
+      setChatHistory([]);
+    } catch (err) { setError(err instanceof Error ? err.message : "Unable to create chat session."); }
+    finally { setLoading(false); }
+  }
+
+  async function onSendChat(e: FormEvent) {
+    e.preventDefault();
+    if (!chatSessionId) return setError("Please create or select a chat session first.");
+    if (!chatMessage.trim()) return setError("Please enter a message.");
+    setLoading(true); setError(null);
+    try {
+      const data = await req<ChatTurnResponse>(
+        `/agents/supervisor-chat/sessions/${encodeURIComponent(chatSessionId)}/messages`,
+        "POST",
+        { message: chatMessage.trim() }
+      );
+      setChatHistory(data.messages);
+      setChatMessage("");
+      await refreshChatSessions();
+    } catch (err) { setError(err instanceof Error ? err.message : "Supervisor chat failed."); }
+    finally { setLoading(false); }
+  }
+
   return (
     <main className="app">
       <div className="shell">
@@ -456,6 +542,55 @@ export default function HomePage() {
               </form>
               {supMode === "stream" && supEvents.length > 0 && <div className="result"><h3>Live Stream Events</h3><pre className="raw">{JSON.stringify(supEvents, null, 2)}</pre></div>}
               {supRes && <div className="result"><div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{supMd}</ReactMarkdown></div><table className="table"><thead><tr><th>Company</th><th>Ticker</th><th>Year</th><th>Doc</th><th>Chunk</th><th>Source Path</th></tr></thead><tbody>{supRes.fundamental.sources.map((s, i) => <tr key={`${s.source_path}-${s.chunk_index}-${i}`}><td>{s.company || "-"}</td><td>{s.ticker || "-"}</td><td>{s.year || "-"}</td><td>{s.doc_type || "-"}</td><td>{s.chunk_index || "-"}</td><td>{s.source_path || "-"}</td></tr>)}</tbody></table></div>}
+            </div>
+          )}
+
+          {tab === "supervisor_chat" && (
+            <div className="card">
+              <h2>Supervisor Chat (Session Memory)</h2>
+              <form onSubmit={onCreateChatSession}>
+                <div className="grid">
+                  <div className="row"><label>Session Title (optional)</label><input value={chatNewTitle} onChange={(e) => setChatNewTitle(e.target.value)} placeholder="APPLE swing analysis" /></div>
+                  <div className="row"><label>Symbol</label><input value={chatNewSymbol} onChange={(e) => setChatNewSymbol(e.target.value)} /></div>
+                </div>
+                <div className="row"><label>Company</label><input value={chatNewCompany} onChange={(e) => setChatNewCompany(e.target.value)} /></div>
+                <button type="submit" disabled={loading}>{loading ? "Creating..." : "Create New Session"}</button>
+              </form>
+
+              <div className="result">
+                <div className="row">
+                  <label>Existing Sessions</label>
+                  <select value={chatSessionId} onChange={(e) => setChatSessionId(e.target.value)}>
+                    <option value="">Select session</option>
+                    {chatSessions.map((s) => (
+                      <option key={s.session_id} value={s.session_id}>
+                        {s.title} [{s.symbol}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <form onSubmit={onSendChat}>
+                <div className="row"><label>Message</label><textarea value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} placeholder="Ask a follow-up on risks, valuation, catalysts, or thesis changes..." /></div>
+                <button type="submit" disabled={loading || !chatSessionId}>{loading ? "Sending..." : "Send Message"}</button>
+              </form>
+
+              <div className="result">
+                <h3>Complete Session History</h3>
+                {chatHistory.length === 0 ? (
+                  <p className="muted">No messages yet for this session.</p>
+                ) : (
+                  <div className="chat-history">
+                    {chatHistory.map((m, i) => (
+                      <div key={`${m.role}-${i}`} className={`chat-bubble ${m.role === "user" ? "user" : "assistant"}`}>
+                        <p className="chat-role">{m.role === "user" ? "You" : "Supervisor"}</p>
+                        <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

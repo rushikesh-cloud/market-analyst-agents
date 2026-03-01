@@ -2,11 +2,13 @@
 uvicorn
 python-dotenv
 langchain
+langgraph
+langgraph-checkpoint-postgres
 langchain-community
 langchain-openai
 langchain-text-splitters
 azure-ai-documentintelligence
-psycopg[binary]
+psycopg[binary,pool]
 pgvector
 python-multipart
 tavily-python

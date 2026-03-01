@@ -9,7 +9,8 @@ param(
     [string]$EnvFile = ".env",
     [double]$Cpu = 1.0,
     [double]$Memory = 2.0,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$SkipLocalDockerBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,6 +25,14 @@ function Invoke-Az([string[]]$CommandArgs) {
         throw "Azure CLI failed: az $($CommandArgs -join ' ')"
     }
     return $result
+}
+
+function Invoke-Local([string]$Command, [string]$ErrorMessage) {
+    Write-Host "  -> $Command" -ForegroundColor DarkGray
+    Invoke-Expression $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw $ErrorMessage
+    }
 }
 
 function Parse-EnvFile([string]$Path) {
@@ -85,6 +94,12 @@ if (-not $acrExists) {
 $acrLoginServer = Invoke-Az @("acr", "show", "--name", $AcrName, "--resource-group", $ResourceGroup, "--query", "loginServer", "--output", "tsv")
 $acrUsername = Invoke-Az @("acr", "credential", "show", "--name", $AcrName, "--resource-group", $ResourceGroup, "--query", "username", "--output", "tsv")
 $acrPassword = Invoke-Az @("acr", "credential", "show", "--name", $AcrName, "--resource-group", $ResourceGroup, "--query", "passwords[0].value", "--output", "tsv")
+
+if (-not $SkipLocalDockerBuild) {
+    Write-Step "Compiling Docker image locally before deployment"
+    $localTag = "$ImageName`:preflight"
+    Invoke-Local "docker build -t $localTag ." "Local Docker build failed. Aborting deployment."
+}
 
 if (-not $SkipBuild) {
     Write-Step "Building image in ACR: $acrLoginServer/$($ImageName):$ImageTag"

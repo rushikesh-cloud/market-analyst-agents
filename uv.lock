@@ -96,10 +96,14 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "autoreload" },
+    { name = "certifi" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "autoreload", specifier = ">=0.1.2" }]
+requires-dist = [
+    { name = "autoreload", specifier = ">=0.1.2" },
+    { name = "certifi", specifier = ">=2026.1.4" },
+]
 
 [[package]]
 name = "outcome"
