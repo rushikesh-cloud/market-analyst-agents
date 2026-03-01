@@ -24,15 +24,52 @@ Thumbs.db
 
 # Env files
 .env
+.env.*
+!.env.example
 
 # Logs
 *.log
+*.out
+*.err
 
 # Data outputs
 /data/processed/
 /data/chunks/
 /data/raw/
+/data/*.png
 
 # Editor
 .vscode/
 .idea/
+
+# Test and coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Frontend (Next.js / Node)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/.vercel/
+frontend/.eslintcache
+frontend/*.tsbuildinfo
+
+# Python tooling
+.python-version
+.tox/
+.nox/
+
+# Backend runtime artifacts
+backend/data/uploads/
+backend/data/processed/
+
+# Notebook outputs
+notebooks/data/processed/
+
+# Local/generated files
+ingested_documents

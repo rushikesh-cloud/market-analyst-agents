@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env
+frontend/node_modules
+frontend/.next
+notebooks
+docs
+apple

@@ -30,6 +30,7 @@ def _env(name: str, default: Optional[str] = None) -> str:
 @dataclass
 class IngestionResult:
     company: str
+    ticker: Optional[str]
     source_path: str
     chunks_stored: int
     collection_name: str
@@ -89,6 +90,7 @@ def _attach_metadata(
     chunks: Iterable[Document],
     *,
     company: str,
+    ticker: Optional[str],
     doc_type: str,
     year: Optional[str],
     source_path: str,
@@ -99,6 +101,7 @@ def _attach_metadata(
         metadata.update(
             {
                 "company": company,
+                "ticker": ticker,
                 "doc_type": doc_type,
                 "year": year,
                 "source_path": source_path,
@@ -130,6 +133,7 @@ def ingest_pdf_to_pgvector(
     *,
     pdf_path: Path,
     company: str,
+    ticker: Optional[str] = None,
     doc_type: str = "annual_report",
     year: Optional[str] = None,
     collection_name: str = "fundamental_docs",
@@ -155,6 +159,7 @@ def ingest_pdf_to_pgvector(
     enriched_chunks = _attach_metadata(
         chunks,
         company=company,
+        ticker=ticker.strip().upper() if ticker else None,
         doc_type=doc_type,
         year=year,
         source_path=str(pdf_path),
@@ -170,6 +175,7 @@ def ingest_pdf_to_pgvector(
 
     return IngestionResult(
         company=company,
+        ticker=ticker.strip().upper() if ticker else None,
         source_path=str(pdf_path),
         chunks_stored=len(enriched_chunks),
         collection_name=collection_name,

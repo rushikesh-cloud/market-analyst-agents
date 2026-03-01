@@ -47,3 +47,24 @@ Ensure the target Postgres database has the `pgvector` extension installed:
 ```
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
+
+## Deploy to Azure Container Instances (ACI)
+
+Prerequisites:
+- Azure CLI installed
+- Already logged in (`az login`)
+- `.env` present in repo root
+
+This deploys a single full-stack container:
+- Frontend (Next.js) on `/`
+- Backend (FastAPI) behind Nginx on `/api`
+
+Run:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/deploy_aci.ps1
+```
+
+Optional explicit ACR name:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/deploy_aci.ps1 -AcrName marketanalystk07j1w
+```

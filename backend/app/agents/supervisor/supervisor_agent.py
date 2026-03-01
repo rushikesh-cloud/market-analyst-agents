@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from langchain.agents import create_agent
-from langchain.messages import AIMessage
+from langchain.messages import AIMessage, HumanMessage
 from langchain.tools import tool
 from langchain_openai import AzureChatOpenAI
 
@@ -53,6 +53,10 @@ def _extract_final_text(payload: Any) -> str:
         if output is not None:
             return str(output)
     return str(payload)
+
+
+def _messages_payload(query: str) -> Dict[str, list[HumanMessage]]:
+    return {"messages": [HumanMessage(content=query)]}
 
 
 def _build_supervisor_llm() -> AzureChatOpenAI:
@@ -140,7 +144,7 @@ def _build_supervisor_agent(
         """Run web-news subagent for company and symbol context."""
         cleaned_query = (query or "").strip() or f"{company} {symbol} latest company news catalysts risks"
         agent = build_web_search_agent()
-        result = agent.invoke({"input": cleaned_query})
+        result = agent.invoke(_messages_payload(cleaned_query))
         answer_text = _extract_final_text(result)
         payload = {
             "query": cleaned_query,
@@ -235,7 +239,7 @@ def _invoke_supervisor_synthesis(
         f"News focus query: {(news_query or '').strip() or f'{company} {symbol} latest company news catalysts risks'}\n"
         "Run all required tools, then provide the final JSON."
     )
-    response = agent.invoke({"input": prompt})
+    response = agent.invoke(_messages_payload(prompt))
     text = _extract_final_text(response)
     try:
         return _normalize_synthesis(_parse_json_object(text))
@@ -313,7 +317,7 @@ def analyze_market_supervised(
     if not news_payload:
         query = (news_query or f"{company} {symbol} latest company news catalysts risks").strip()
         web_agent = build_web_search_agent()
-        news_result = web_agent.invoke({"input": query})
+        news_result = web_agent.invoke(_messages_payload(query))
         news_payload = {
             "query": query,
             "answer": _extract_final_text(news_result),
@@ -334,3 +338,104 @@ def analyze_market_supervised(
         news=news_payload,
         synthesis=synthesis,
     )
+
+
+def stream_market_supervised(
+    *,
+    symbol: str,
+    company: str,
+    fundamental_question: Optional[str] = None,
+    news_query: Optional[str] = None,
+    technical_period: str = "3mo",
+    technical_interval: str = "1d",
+    collection_name: str = "fundamental_docs",
+    top_k: int = 8,
+) -> Iterator[Dict[str, Any]]:
+    symbol = symbol.strip().upper()
+    company = company.strip().upper()
+    agent, tool_outputs = _build_supervisor_agent(
+        symbol=symbol,
+        company=company,
+        technical_period=technical_period,
+        technical_interval=technical_interval,
+        collection_name=collection_name,
+        top_k=top_k,
+    )
+
+    prompt = (
+        f"Symbol: {symbol}\n"
+        f"Company: {company}\n"
+        f"Fundamental focus question: {(fundamental_question or '').strip() or 'General financial strength and risks'}\n"
+        f"News focus query: {(news_query or '').strip() or f'{company} {symbol} latest company news catalysts risks'}\n"
+        "Run all required tools, then provide the final JSON."
+    )
+
+    last_values_payload: Any = None
+    for chunk in agent.stream(_messages_payload(prompt), stream_mode=["updates", "messages", "values"]):
+        if isinstance(chunk, tuple) and len(chunk) == 2:
+            stream_mode, payload = chunk
+            if stream_mode == "values":
+                last_values_payload = payload
+            yield {"event": "stream", "stream_mode": stream_mode, "payload": payload}
+        else:
+            yield {"event": "stream", "payload": chunk}
+
+    text = _extract_final_text(last_values_payload)
+    try:
+        synthesis = _normalize_synthesis(_parse_json_object(text))
+    except json.JSONDecodeError:
+        synthesis = _default_synthesis_fallback(text or "Synthesis response was not valid JSON.")
+
+    technical_payload = tool_outputs.get("technical", {})
+    fundamental_payload = tool_outputs.get("fundamental", {})
+    news_payload = tool_outputs.get("news", {})
+
+    if not technical_payload:
+        technical_result = analyze_stock_technical(symbol, period=technical_period, interval=technical_interval)
+        technical_payload = {
+            "symbol": technical_result.symbol,
+            "image_path": technical_result.image_path,
+            "summary": technical_result.summary,
+            "latest_values": technical_result.latest_values,
+        }
+    if not fundamental_payload:
+        fundamental_result = analyze_fundamentals(
+            company=company,
+            question=fundamental_question.strip() if fundamental_question else None,
+            mode="auto",
+            collection_name=collection_name,
+            top_k=top_k,
+        )
+        fundamental_payload = {
+            "mode": fundamental_result.mode,
+            "company": fundamental_result.company,
+            "answer": _extract_final_text(fundamental_result.answer),
+            "sources": fundamental_result.sources,
+        }
+    if not news_payload:
+        query = (news_query or f"{company} {symbol} latest company news catalysts risks").strip()
+        web_agent = build_web_search_agent()
+        news_result = web_agent.invoke(_messages_payload(query))
+        news_payload = {
+            "query": query,
+            "answer": _extract_final_text(news_result),
+        }
+
+    if not synthesis.get("technical_section") and not synthesis.get("fundamental_section") and not synthesis.get("news_section"):
+        synthesis = _build_fallback_sections(
+            technical=technical_payload,
+            fundamental=fundamental_payload,
+            news=news_payload,
+        )
+
+    yield {
+        "event": "final",
+        "result": {
+            "symbol": symbol,
+            "company": company,
+            "technical": technical_payload,
+            "fundamental": fundamental_payload,
+            "news": news_payload,
+            "synthesis": synthesis,
+        },
+    }

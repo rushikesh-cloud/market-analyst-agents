@@ -6,13 +6,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Tuple
 
+import matplotlib
 import pandas as pd
 import pandas_ta as ta
 import yfinance as yf
-import mplfinance as mpf
 
 from langchain_openai import AzureChatOpenAI
 from langchain.messages import HumanMessage
+
+# Force headless backend to avoid Tkinter main-loop errors in API/server contexts.
+matplotlib.use("Agg")
+import mplfinance as mpf
 
 
 def _env(name: str) -> str:
