@@ -5,16 +5,35 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents.fundamental.fundamental_agent import analyze_fundamentals
-from app.agents.news.web_search_agent import build_web_search_agent, invoke_market_web_search
+from app.agents.news.web_search_agent import (
+    build_web_search_agent,
+    invoke_market_web_search,
+    parse_web_search_result,
+)
 from app.agents.supervisor.supervisor_agent import analyze_market_supervised
+from app.agents.supervisor.supervisor_chat_agent import run_supervisor_chat_turn
 from app.agents.technical.technical_chart_agent import analyze_stock_technical
 from app.guardrails import GuardrailViolation, ensure_market_query
-from app.services.document_ingestion import ingest_pdf_to_pgvector
+from app.services.document_ingestion import (
+    delete_ingested_document_from_pgvector,
+    ingest_pdf_to_pgvector,
+    list_ingested_documents_from_pgvector,
+)
+from app.services.supervisor_chat_memory import (
+    add_supervisor_chat_message,
+    create_supervisor_chat_session,
+    get_supervisor_chat_session,
+    init_supervisor_chat_tables,
+    list_supervisor_chat_messages,
+    list_supervisor_chat_sessions,
+    update_supervisor_chat_session_context,
+)
 
 
 app = FastAPI(title="Market Analyst Agent API")
@@ -23,6 +42,13 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Load env vars from .env at app startup.
 # Support running uvicorn from repo root or from backend/ directory.
@@ -38,6 +64,8 @@ for _env_path in _env_candidates:
         break
 else:
     load_dotenv(override=False)
+
+init_supervisor_chat_tables()
 
 _web_search_agent: Optional[Any] = None
 
@@ -106,6 +134,7 @@ class WebSearchResponse(BaseModel):
 
     query: str
     answer: str
+    sources: list[dict]
 
 
 class TechnicalRequest(BaseModel):
@@ -136,11 +165,29 @@ class TechnicalResponse(BaseModel):
 class IngestionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    id: str
     company: str
+    ticker: Optional[str]
     source_path: str
     chunks_stored: int
     collection_name: str
     markdown_path: Optional[str]
+    doc_type: str
+    year: Optional[str]
+
+
+class IngestedDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    company: str
+    ticker: Optional[str]
+    source_path: str
+    chunks_stored: int
+    collection_name: str
+    markdown_path: Optional[str]
+    doc_type: str = "annual_report"
+    year: Optional[str]
 
 
 class FundamentalRequest(BaseModel):
@@ -173,6 +220,7 @@ class SourceDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     company: Optional[str] = None
+    ticker: Optional[str] = None
     year: Optional[str] = None
     doc_type: Optional[str] = None
     source_path: Optional[str] = None
@@ -240,6 +288,7 @@ class NewsPayload(BaseModel):
 
     query: str
     answer: str
+    sources: list[dict] = Field(default_factory=list)
 
 
 class SynthesisPayload(BaseModel):
@@ -265,6 +314,46 @@ class SupervisorResponse(BaseModel):
     synthesis: SynthesisPayload
 
 
+class SupervisorChatCreateSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(..., min_length=1)
+    symbol: Optional[str] = None
+    company: Optional[str] = None
+
+
+class SupervisorChatSession(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    title: str
+    symbol: Optional[str]
+    company: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class SupervisorChatMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+    session_id: str
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: str
+
+
+class SupervisorChatTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1)
+    symbol: Optional[str] = None
+    company: Optional[str] = None
+
+
+class SupervisorChatTurnResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session: SupervisorChatSession
+    assistant_message: SupervisorChatMessage
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -280,8 +369,8 @@ def run_web_search(payload: WebSearchRequest) -> WebSearchResponse:
     logger.info("API /agents/web-search")
     agent = get_web_search_agent()
     result = invoke_market_web_search(agent, query)
-    answer = _extract_agent_text(result)
-    return WebSearchResponse(query=query, answer=answer)
+    parsed = parse_web_search_result(result, query)
+    return WebSearchResponse(query=parsed["query"], answer=parsed["answer"], sources=parsed["sources"])
 
 
 @app.post("/agents/technical", response_model=TechnicalResponse)
@@ -351,6 +440,7 @@ def run_supervisor(payload: SupervisorRequest) -> SupervisorResponse:
 @app.post("/agents/ingest", response_model=IngestionResponse)
 async def ingest_document(
     company: str = Form(...),
+    ticker: Optional[str] = Form(None),
     doc_type: str = Form("annual_report"),
     year: Optional[str] = Form(None),
     collection: str = Form("fundamental_docs"),
@@ -372,6 +462,7 @@ async def ingest_document(
     result = ingest_pdf_to_pgvector(
         pdf_path=target_path,
         company=company.strip(),
+        ticker=ticker.strip().upper() if ticker else None,
         doc_type=doc_type.strip(),
         year=year.strip() if year else None,
         collection_name=collection.strip(),
@@ -379,10 +470,109 @@ async def ingest_document(
         embeddings_deployment=embeddings_deployment.strip() if embeddings_deployment else None,
     )
 
+    record_list = list_ingested_documents_from_pgvector(collection_name=result.collection_name)
+    matched = next(
+        (
+            item
+            for item in record_list
+            if item.get("collection_name") == result.collection_name
+            and item.get("company") == result.company
+            and item.get("source_path") == result.source_path
+            and (item.get("ticker") or None) == (result.ticker or None)
+            and (item.get("year") or None) == (year.strip() if year else None)
+        ),
+        None,
+    )
+    if matched is None:
+        matched = {
+            "id": "",
+            "doc_type": doc_type.strip(),
+            "year": year.strip() if year else None,
+        }
+
     return IngestionResponse(
+        id=matched["id"],
         company=result.company,
+        ticker=result.ticker,
         source_path=result.source_path,
         chunks_stored=result.chunks_stored,
         collection_name=result.collection_name,
         markdown_path=result.markdown_path,
+        doc_type=str(matched.get("doc_type") or doc_type.strip()),
+        year=matched.get("year"),
     )
+
+
+@app.get("/agents/supervisor-chat/sessions", response_model=list[SupervisorChatSession])
+def get_supervisor_chat_sessions() -> list[SupervisorChatSession]:
+    logger.info("API /agents/supervisor-chat/sessions")
+    sessions = list_supervisor_chat_sessions()
+    return [SupervisorChatSession(**item) for item in sessions]
+
+
+@app.post("/agents/supervisor-chat/sessions", response_model=SupervisorChatSession)
+def create_supervisor_chat_session_endpoint(payload: SupervisorChatCreateSessionRequest) -> SupervisorChatSession:
+    logger.info("API create /agents/supervisor-chat/sessions")
+    created = create_supervisor_chat_session(
+        title=payload.title.strip(),
+        symbol=payload.symbol.strip().upper() if payload.symbol else None,
+        company=payload.company.strip().upper() if payload.company else None,
+    )
+    return SupervisorChatSession(**created)
+
+
+@app.get("/agents/supervisor-chat/sessions/{session_id}/messages", response_model=list[SupervisorChatMessage])
+def get_supervisor_chat_history(session_id: str) -> list[SupervisorChatMessage]:
+    logger.info("API /agents/supervisor-chat/sessions/%s/messages", session_id)
+    session = get_supervisor_chat_session(session_id)
+    if session is None:
+        return []
+    messages = list_supervisor_chat_messages(session_id)
+    return [SupervisorChatMessage(**item) for item in messages]
+
+
+@app.post("/agents/supervisor-chat/message", response_model=SupervisorChatTurnResponse)
+def run_supervisor_chat_turn_endpoint(payload: SupervisorChatTurnRequest) -> SupervisorChatTurnResponse:
+    logger.info("API /agents/supervisor-chat/message")
+    session = get_supervisor_chat_session(payload.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session_id not found")
+
+    message_text = ensure_market_query(payload.message, field_name="message")
+    symbol = payload.symbol.strip().upper() if payload.symbol else session.get("symbol")
+    company = payload.company.strip().upper() if payload.company else session.get("company")
+
+    update_supervisor_chat_session_context(session_id=payload.session_id, symbol=symbol, company=company)
+    add_supervisor_chat_message(session_id=payload.session_id, role="user", content=message_text)
+    turn = run_supervisor_chat_turn(
+        session_id=payload.session_id,
+        user_message=message_text,
+        symbol=symbol,
+        company=company,
+    )
+    assistant = add_supervisor_chat_message(
+        session_id=payload.session_id,
+        role="assistant",
+        content=str(turn["answer"]),
+    )
+    updated_session = get_supervisor_chat_session(payload.session_id) or session
+    return SupervisorChatTurnResponse(
+        session=SupervisorChatSession(**updated_session),
+        assistant_message=SupervisorChatMessage(**assistant),
+    )
+
+
+@app.get("/agents/ingested-docs", response_model=list[IngestedDocument])
+def get_ingested_docs() -> list[IngestedDocument]:
+    logger.info("API /agents/ingested-docs")
+    items = list_ingested_documents_from_pgvector()
+    return [IngestedDocument(**item) for item in items]
+
+
+@app.delete("/agents/ingested-docs/{doc_id}")
+def delete_ingested_doc(doc_id: str) -> dict:
+    logger.info("API delete ingested-doc id=%s", doc_id)
+    deleted_count = delete_ingested_document_from_pgvector(doc_id=doc_id)
+    if deleted_count <= 0:
+        return {"deleted": False, "message": "No matching vectors found for document id."}
+    return {"deleted": True, "deleted_chunks": deleted_count}

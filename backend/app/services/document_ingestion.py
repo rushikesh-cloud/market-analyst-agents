@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
+import base64
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 from azure.core.credentials import AzureKeyCredential
+import psycopg
 try:
     from langchain_core.documents import Document
 except ImportError:  # pragma: no cover
@@ -35,6 +38,26 @@ class IngestionResult:
     chunks_stored: int
     collection_name: str
     markdown_path: Optional[str]
+
+
+def _normalize_pg_dsn(dsn: str) -> str:
+    if dsn.startswith("postgresql+psycopg://"):
+        return dsn.replace("postgresql+psycopg://", "postgresql://", 1)
+    return dsn
+
+
+def _encode_doc_id(payload: Dict[str, Any]) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _decode_doc_id(doc_id: str) -> Dict[str, Any]:
+    padding = "=" * (-len(doc_id) % 4)
+    raw = base64.urlsafe_b64decode(doc_id + padding).decode("utf-8")
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("Invalid document id payload")
+    return parsed
 
 
 def extract_markdown_from_pdf(
@@ -181,3 +204,112 @@ def ingest_pdf_to_pgvector(
         collection_name=collection_name,
         markdown_path=str(markdown_output_path) if markdown_output_path else None,
     )
+
+
+def list_ingested_documents_from_pgvector(
+    *,
+    collection_name: Optional[str] = None,
+    connection_string: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    connection_string = _normalize_pg_dsn(connection_string or _env("PGVECTOR_CONNECTION_STRING"))
+    sql = """
+        SELECT
+            c.name AS collection_name,
+            COALESCE(e.cmetadata->>'company', '') AS company,
+            NULLIF(COALESCE(e.cmetadata->>'ticker', ''), '') AS ticker,
+            NULLIF(COALESCE(e.cmetadata->>'year', ''), '') AS year,
+            COALESCE(e.cmetadata->>'doc_type', '') AS doc_type,
+            COALESCE(e.cmetadata->>'source_path', '') AS source_path,
+            COUNT(*)::int AS chunks_stored
+        FROM langchain_pg_embedding e
+        JOIN langchain_pg_collection c ON e.collection_id = c.uuid
+        WHERE (%s::text IS NULL OR c.name = %s::text)
+        GROUP BY
+            c.name,
+            COALESCE(e.cmetadata->>'company', ''),
+            NULLIF(COALESCE(e.cmetadata->>'ticker', ''), ''),
+            NULLIF(COALESCE(e.cmetadata->>'year', ''), ''),
+            COALESCE(e.cmetadata->>'doc_type', ''),
+            COALESCE(e.cmetadata->>'source_path', '')
+        ORDER BY c.name, company, year NULLS LAST, source_path;
+    """
+    with psycopg.connect(connection_string) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (collection_name, collection_name))
+            rows = cur.fetchall()
+
+    docs: List[Dict[str, Any]] = []
+    for row in rows:
+        key_payload = {
+            "collection_name": row[0],
+            "company": row[1],
+            "ticker": row[2],
+            "year": row[3],
+            "doc_type": row[4],
+            "source_path": row[5],
+        }
+        docs.append(
+            {
+                "id": _encode_doc_id(key_payload),
+                "collection_name": row[0],
+                "company": row[1],
+                "ticker": row[2],
+                "year": row[3],
+                "doc_type": row[4],
+                "source_path": row[5],
+                "chunks_stored": row[6],
+                "markdown_path": None,
+            }
+        )
+    return docs
+
+
+def delete_ingested_document_from_pgvector(
+    *,
+    doc_id: str,
+    connection_string: Optional[str] = None,
+) -> int:
+    payload = _decode_doc_id(doc_id)
+    collection_name = str(payload.get("collection_name") or "")
+    company = str(payload.get("company") or "")
+    source_path = str(payload.get("source_path") or "")
+    ticker = payload.get("ticker")
+    year = payload.get("year")
+    doc_type = payload.get("doc_type")
+    if not collection_name or not company or not source_path:
+        raise ValueError("Invalid document id. Missing required metadata fields.")
+
+    connection_string = _normalize_pg_dsn(connection_string or _env("PGVECTOR_CONNECTION_STRING"))
+    sql = """
+        DELETE FROM langchain_pg_embedding e
+        USING langchain_pg_collection c
+        WHERE e.collection_id = c.uuid
+          AND c.name = %s::text
+          AND COALESCE(e.cmetadata->>'company', '') = %s::text
+          AND COALESCE(e.cmetadata->>'source_path', '') = %s::text
+          AND (%s::text IS NULL OR COALESCE(e.cmetadata->>'ticker', '') = %s::text)
+          AND (%s::text IS NULL OR COALESCE(e.cmetadata->>'year', '') = %s::text)
+          AND (%s::text IS NULL OR COALESCE(e.cmetadata->>'doc_type', '') = %s::text);
+    """
+    ticker_text = None if ticker is None else str(ticker)
+    year_text = None if year is None else str(year)
+    doc_type_text = None if doc_type is None else str(doc_type)
+    with psycopg.connect(connection_string) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    collection_name,
+                    company,
+                    source_path,
+                    ticker_text,
+                    ticker_text,
+                    year_text,
+                    year_text,
+                    doc_type_text,
+                    doc_type_text,
+                ),
+            )
+            deleted = cur.rowcount or 0
+        conn.commit()
+    return int(deleted)

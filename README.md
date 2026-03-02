@@ -36,6 +36,17 @@ TAVILY_API_KEY=
 uvicorn app.main:app --reload --app-dir backend
 ```
 
+### 4b) Run Next.js frontend
+```
+cd frontend
+npm install
+npm run dev
+```
+Frontend default API target is `http://localhost:8000` and can be changed with:
+```
+NEXT_PUBLIC_API_BASE=http://localhost:8000
+```
+
 ### 5) Run notebook
 Open `notebooks/agent_playground.ipynb` and execute the cells.
 

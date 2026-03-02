@@ -71,6 +71,7 @@ def _sources_from_docs(docs: List[Any]) -> List[Dict[str, Any]]:
         sources.append(
             {
                 "company": meta.get("company"),
+                "ticker": meta.get("ticker"),
                 "year": meta.get("year"),
                 "doc_type": meta.get("doc_type"),
                 "source_path": meta.get("source_path"),

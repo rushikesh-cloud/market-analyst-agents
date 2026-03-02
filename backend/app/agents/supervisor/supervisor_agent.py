@@ -12,7 +12,7 @@ from langchain.tools import tool
 from langchain_openai import AzureChatOpenAI
 
 from app.agents.fundamental.fundamental_agent import analyze_fundamentals
-from app.agents.news.web_search_agent import build_web_search_agent, invoke_market_web_search
+from app.agents.news.web_search_agent import build_web_search_agent, invoke_market_web_search, parse_web_search_result
 from app.agents.technical.technical_chart_agent import analyze_stock_technical
 from app.guardrails import ensure_market_query, ensure_stock_symbol
 
@@ -155,10 +155,11 @@ def _build_supervisor_agent(
         cleaned_query = (query or "").strip() or f"{company} {symbol} latest company news catalysts risks"
         agent = build_web_search_agent()
         result = invoke_market_web_search(agent, cleaned_query)
-        answer_text = _extract_final_text(result)
+        parsed = parse_web_search_result(result, cleaned_query)
         payload = {
-            "query": cleaned_query,
-            "answer": answer_text,
+            "query": parsed["query"],
+            "answer": parsed["answer"],
+            "sources": parsed["sources"],
         }
         tool_outputs["news"] = payload
         return json.dumps(payload)
@@ -336,9 +337,11 @@ def analyze_market_supervised(
             query = (news_query or f"{company} {symbol} latest company news catalysts risks").strip()
             web_agent = build_web_search_agent()
             news_result = invoke_market_web_search(web_agent, query)
+            parsed_news = parse_web_search_result(news_result, query)
             news_payload = {
-                "query": query,
-                "answer": _extract_final_text(news_result),
+                "query": parsed_news["query"],
+                "answer": parsed_news["answer"],
+                "sources": parsed_news["sources"],
             }
 
         if not synthesis.get("technical_section") and not synthesis.get("fundamental_section") and not synthesis.get("news_section"):
