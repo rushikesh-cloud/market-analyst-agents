@@ -1,18 +1,11 @@
 ﻿from __future__ import annotations
 
 import os
-from typing import List
+from typing import Any
 
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.agents import create_agent
-try:
-    # LangChain < 1.0
-    from langchain.prompts import ChatPromptTemplate
-except ModuleNotFoundError:
-    # LangChain 1.0+ moved prompts to langchain_core
-    from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import AzureChatOpenAI
-from langchain.messages import SystemMessage, HumanMessage, AIMessage
 
 
 def _env(name: str) -> str:
@@ -22,7 +15,7 @@ def _env(name: str) -> str:
     return value
 
 
-def build_web_search_agent() :
+def build_web_search_agent() -> Any:
     """
     Web search agent using Tavily + Azure OpenAI.
 

@@ -1,10 +1,11 @@
 ﻿from __future__ import annotations
 
 import base64
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, Optional
 
 import pandas as pd
 import pandas_ta as ta
@@ -27,7 +28,7 @@ class TechnicalAnalysisResult:
     symbol: str
     image_path: str
     summary: str
-    latest_values: Dict[str, float]
+    latest_values: Dict[str, Optional[float]]
 
 
 def _fetch_price_data(symbol: str, period: str = "3mo", interval: str = "1d") -> pd.DataFrame:
@@ -109,7 +110,28 @@ def _vision_analyze(image_path: Path, symbol: str) -> str:
     )
 
     response = llm.invoke([msg])
-    return response.content
+    content = response.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if text:
+                    parts.append(str(text))
+            elif item is not None:
+                parts.append(str(item))
+        return "\n".join(parts).strip()
+    return str(content)
+
+
+def _finite_or_none(value: Any) -> Optional[float]:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def analyze_stock_technical(symbol: str, period: str = "3mo", interval: str = "1d") -> TechnicalAnalysisResult:
@@ -123,11 +145,11 @@ def analyze_stock_technical(symbol: str, period: str = "3mo", interval: str = "1
 
     latest = df.iloc[-1]
     latest_values = {
-        "close": float(latest["Close"]),
-        "rsi_14": float(latest.get("RSI_14", float("nan"))),
-        "macd": float(latest.get("MACD_12_26_9", float("nan"))),
-        "macd_signal": float(latest.get("MACDs_12_26_9", float("nan"))),
-        "macd_hist": float(latest.get("MACDh_12_26_9", float("nan"))),
+        "close": _finite_or_none(latest.get("Close")),
+        "rsi_14": _finite_or_none(latest.get("RSI_14")),
+        "macd": _finite_or_none(latest.get("MACD_12_26_9")),
+        "macd_signal": _finite_or_none(latest.get("MACDs_12_26_9")),
+        "macd_hist": _finite_or_none(latest.get("MACDh_12_26_9")),
     }
 
     return TechnicalAnalysisResult(

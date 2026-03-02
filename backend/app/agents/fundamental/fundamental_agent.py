@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from langchain.agents import create_agent
+from langchain.messages import AIMessage
 from langchain.tools import tool
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_openai import AzureChatOpenAI
 from langchain_openai import AzureOpenAIEmbeddings
-from langchain.messages import HumanMessage, SystemMessage
 
 
 def _env(name: str, default: Optional[str] = None) -> str:
@@ -73,6 +73,43 @@ def _sources_from_docs(docs: List[Any]) -> List[Dict[str, Any]]:
             }
         )
     return sources
+
+
+def _extract_final_text(payload: Any) -> str:
+    if payload is None:
+        return ""
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, AIMessage):
+        return str(payload.content)
+    if isinstance(payload, dict):
+        messages = payload.get("messages")
+        if isinstance(messages, list) and messages:
+            last = messages[-1]
+            content = last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
+            if isinstance(content, list):
+                parts: List[str] = []
+                for item in content:
+                    if isinstance(item, dict):
+                        text = item.get("text")
+                        if text:
+                            parts.append(str(text))
+                    elif item is not None:
+                        parts.append(str(item))
+                if parts:
+                    return "\n".join(parts)
+            if content:
+                return str(content)
+        output = payload.get("output")
+        if isinstance(output, str):
+            return output
+        if output is not None:
+            return str(output)
+    return str(payload)
+
+
+def _to_agent_messages_input(user_text: str) -> Dict[str, Any]:
+    return {"messages": [{"role": "user", "content": user_text}]}
 
 
 @dataclass
@@ -159,14 +196,14 @@ def analyze_fundamentals(
             "- Overall Assessment\n"
             "- Key Risks / Data Gaps\n"
         )
-        response = agent.invoke({"input": prompt})
+        response = agent.invoke(_to_agent_messages_input(prompt))
         print(response)
-        answer = response.get("output", response)
+        answer = _extract_final_text(response)
 
         return FundamentalAnalysisResult(
             mode="general",
             company=company,
-            answer=response,
+            answer=answer,
             sources=_sources_from_docs(retrieved_docs),
         )
 
@@ -178,13 +215,13 @@ def analyze_fundamentals(
         f"Question: {question}\n\n"
         "Use the retriever tool to get the most relevant chunks before answering."
     )
-    response = agent.invoke({"input": prompt})
+    response = agent.invoke(_to_agent_messages_input(prompt))
     print(response)
-    answer = response.get("output", response)
+    answer = _extract_final_text(response)
 
     return FundamentalAnalysisResult(
         mode="qa",
         company=company,
-        answer=response,
+        answer=answer,
         sources=_sources_from_docs(retrieved_docs),
     )

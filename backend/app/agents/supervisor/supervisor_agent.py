@@ -33,7 +33,7 @@ def _extract_final_text(payload: Any) -> str:
         messages = payload.get("messages")
         if isinstance(messages, list) and messages:
             last = messages[-1]
-            content = getattr(last, "content", "")
+            content = last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
             if isinstance(content, list):
                 parts = []
                 for item in content:
@@ -53,6 +53,10 @@ def _extract_final_text(payload: Any) -> str:
         if output is not None:
             return str(output)
     return str(payload)
+
+
+def _to_agent_messages_input(user_text: str) -> Dict[str, Any]:
+    return {"messages": [{"role": "user", "content": user_text}]}
 
 
 def _build_supervisor_llm() -> AzureChatOpenAI:
@@ -140,7 +144,7 @@ def _build_supervisor_agent(
         """Run web-news subagent for company and symbol context."""
         cleaned_query = (query or "").strip() or f"{company} {symbol} latest company news catalysts risks"
         agent = build_web_search_agent()
-        result = agent.invoke({"input": cleaned_query})
+        result = agent.invoke(_to_agent_messages_input(cleaned_query))
         answer_text = _extract_final_text(result)
         payload = {
             "query": cleaned_query,
@@ -235,7 +239,7 @@ def _invoke_supervisor_synthesis(
         f"News focus query: {(news_query or '').strip() or f'{company} {symbol} latest company news catalysts risks'}\n"
         "Run all required tools, then provide the final JSON."
     )
-    response = agent.invoke({"input": prompt})
+    response = agent.invoke(_to_agent_messages_input(prompt))
     text = _extract_final_text(response)
     try:
         return _normalize_synthesis(_parse_json_object(text))
@@ -313,7 +317,7 @@ def analyze_market_supervised(
     if not news_payload:
         query = (news_query or f"{company} {symbol} latest company news catalysts risks").strip()
         web_agent = build_web_search_agent()
-        news_result = web_agent.invoke({"input": query})
+        news_result = web_agent.invoke(_to_agent_messages_input(query))
         news_payload = {
             "query": query,
             "answer": _extract_final_text(news_result),
