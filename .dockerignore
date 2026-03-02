@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+frontend/node_modules
+frontend/.next
+notebooks
+docs
+apple
+ingested_documents
+data
+documents
+.env

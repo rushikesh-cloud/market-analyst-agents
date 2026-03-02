@@ -35,7 +35,7 @@ type ChatMessage = {
   created_at: string;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api";
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: "ingest", label: "PDF Ingestion" },
