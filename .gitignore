@@ -32,7 +32,14 @@ Thumbs.db
 /data/processed/
 /data/chunks/
 /data/raw/
+/backend/data/
+/notebooks/data/
 
 # Editor
 .vscode/
 .idea/
+
+# Test/cache/tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

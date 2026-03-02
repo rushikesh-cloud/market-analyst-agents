@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -11,8 +12,11 @@ from langchain.tools import tool
 from langchain_openai import AzureChatOpenAI
 
 from app.agents.fundamental.fundamental_agent import analyze_fundamentals
-from app.agents.news.web_search_agent import build_web_search_agent
+from app.agents.news.web_search_agent import build_web_search_agent, invoke_market_web_search
 from app.agents.technical.technical_chart_agent import analyze_stock_technical
+from app.guardrails import ensure_market_query, ensure_stock_symbol
+
+logger = logging.getLogger(__name__)
 
 
 def _env(name: str) -> str:
@@ -102,12 +106,14 @@ def _build_supervisor_agent(
     top_k: int,
 ):
     llm = _build_supervisor_llm()
+    logger.debug("Building supervisor agent: symbol=%s company=%s collection=%s top_k=%s", symbol, company, collection_name, top_k)
 
     tool_outputs: Dict[str, Any] = {}
 
     @tool("technical_subagent")
     def technical_subagent(period: str = technical_period, interval: str = technical_interval) -> str:
         """Run technical analysis subagent for the target stock symbol."""
+        logger.info("Supervisor -> technical_subagent")
         result = analyze_stock_technical(symbol, period=period, interval=interval)
         payload = {
             "symbol": result.symbol,
@@ -121,7 +127,10 @@ def _build_supervisor_agent(
     @tool("fundamental_subagent")
     def fundamental_subagent(question: str = "") -> str:
         """Run fundamental analysis subagent for the target company."""
+        logger.info("Supervisor -> fundamental_subagent")
         cleaned_question = (question or "").strip() or None
+        if cleaned_question:
+            cleaned_question = ensure_market_query(cleaned_question, field_name="fundamental_question")
         result = analyze_fundamentals(
             company=company,
             question=cleaned_question,
@@ -142,9 +151,10 @@ def _build_supervisor_agent(
     @tool("news_subagent")
     def news_subagent(query: str = "") -> str:
         """Run web-news subagent for company and symbol context."""
+        logger.info("Supervisor -> news_subagent")
         cleaned_query = (query or "").strip() or f"{company} {symbol} latest company news catalysts risks"
         agent = build_web_search_agent()
-        result = agent.invoke(_to_agent_messages_input(cleaned_query))
+        result = invoke_market_web_search(agent, cleaned_query)
         answer_text = _extract_final_text(result)
         payload = {
             "query": cleaned_query,
@@ -239,11 +249,13 @@ def _invoke_supervisor_synthesis(
         f"News focus query: {(news_query or '').strip() or f'{company} {symbol} latest company news catalysts risks'}\n"
         "Run all required tools, then provide the final JSON."
     )
+    logger.info("Running supervisor synthesis")
     response = agent.invoke(_to_agent_messages_input(prompt))
     text = _extract_final_text(response)
     try:
         return _normalize_synthesis(_parse_json_object(text))
     except json.JSONDecodeError:
+        logger.error("Supervisor synthesis returned invalid JSON")
         return _default_synthesis_fallback(text or "Synthesis response was not valid JSON.")
 
 
@@ -268,8 +280,13 @@ def analyze_market_supervised(
     collection_name: str = "fundamental_docs",
     top_k: int = 8,
 ) -> SupervisorAnalysisResult:
-    symbol = symbol.strip().upper()
+    symbol = ensure_stock_symbol(symbol)
     company = company.strip().upper()
+    logger.info("Starting supervised analysis: symbol=%s company=%s", symbol, company)
+    if fundamental_question:
+        fundamental_question = ensure_market_query(fundamental_question, field_name="fundamental_question")
+    if news_query:
+        news_query = ensure_market_query(news_query, field_name="news_query")
     agent, tool_outputs = _build_supervisor_agent(
         symbol=symbol,
         company=company,
@@ -279,62 +296,66 @@ def analyze_market_supervised(
         top_k=top_k,
     )
 
-    synthesis = _invoke_supervisor_synthesis(
-        symbol=symbol,
-        company=company,
-        fundamental_question=fundamental_question,
-        news_query=news_query,
-        agent=agent,
-    )
-
-    technical_payload = tool_outputs.get("technical", {})
-    fundamental_payload = tool_outputs.get("fundamental", {})
-    news_payload = tool_outputs.get("news", {})
-
-    # If the supervisor missed a tool call, fill gaps deterministically.
-    if not technical_payload:
-        technical_result = analyze_stock_technical(symbol, period=technical_period, interval=technical_interval)
-        technical_payload = {
-            "symbol": technical_result.symbol,
-            "image_path": technical_result.image_path,
-            "summary": technical_result.summary,
-            "latest_values": technical_result.latest_values,
-        }
-    if not fundamental_payload:
-        fundamental_result = analyze_fundamentals(
+    try:
+        synthesis = _invoke_supervisor_synthesis(
+            symbol=symbol,
             company=company,
-            question=fundamental_question.strip() if fundamental_question else None,
-            mode="auto",
-            collection_name=collection_name,
-            top_k=top_k,
+            fundamental_question=fundamental_question,
+            news_query=news_query,
+            agent=agent,
         )
-        fundamental_payload = {
-            "mode": fundamental_result.mode,
-            "company": fundamental_result.company,
-            "answer": _extract_final_text(fundamental_result.answer),
-            "sources": fundamental_result.sources,
-        }
-    if not news_payload:
-        query = (news_query or f"{company} {symbol} latest company news catalysts risks").strip()
-        web_agent = build_web_search_agent()
-        news_result = web_agent.invoke(_to_agent_messages_input(query))
-        news_payload = {
-            "query": query,
-            "answer": _extract_final_text(news_result),
-        }
 
-    if not synthesis.get("technical_section") and not synthesis.get("fundamental_section") and not synthesis.get("news_section"):
-        synthesis = _build_fallback_sections(
+        technical_payload = tool_outputs.get("technical", {})
+        fundamental_payload = tool_outputs.get("fundamental", {})
+        news_payload = tool_outputs.get("news", {})
+
+        # If the supervisor missed a tool call, fill gaps deterministically.
+        if not technical_payload:
+            technical_result = analyze_stock_technical(symbol, period=technical_period, interval=technical_interval)
+            technical_payload = {
+                "symbol": technical_result.symbol,
+                "image_path": technical_result.image_path,
+                "summary": technical_result.summary,
+                "latest_values": technical_result.latest_values,
+            }
+        if not fundamental_payload:
+            fundamental_result = analyze_fundamentals(
+                company=company,
+                question=fundamental_question.strip() if fundamental_question else None,
+                mode="auto",
+                collection_name=collection_name,
+                top_k=top_k,
+            )
+            fundamental_payload = {
+                "mode": fundamental_result.mode,
+                "company": fundamental_result.company,
+                "answer": _extract_final_text(fundamental_result.answer),
+                "sources": fundamental_result.sources,
+            }
+        if not news_payload:
+            query = (news_query or f"{company} {symbol} latest company news catalysts risks").strip()
+            web_agent = build_web_search_agent()
+            news_result = invoke_market_web_search(web_agent, query)
+            news_payload = {
+                "query": query,
+                "answer": _extract_final_text(news_result),
+            }
+
+        if not synthesis.get("technical_section") and not synthesis.get("fundamental_section") and not synthesis.get("news_section"):
+            synthesis = _build_fallback_sections(
+                technical=technical_payload,
+                fundamental=fundamental_payload,
+                news=news_payload,
+            )
+        logger.info("Completed supervised analysis: symbol=%s company=%s", symbol, company)
+        return SupervisorAnalysisResult(
+            symbol=symbol,
+            company=company,
             technical=technical_payload,
             fundamental=fundamental_payload,
             news=news_payload,
+            synthesis=synthesis,
         )
-
-    return SupervisorAnalysisResult(
-        symbol=symbol,
-        company=company,
-        technical=technical_payload,
-        fundamental=fundamental_payload,
-        news=news_payload,
-        synthesis=synthesis,
-    )
+    except Exception:
+        logger.exception("Supervisor analysis failed: symbol=%s company=%s", symbol, company)
+        raise

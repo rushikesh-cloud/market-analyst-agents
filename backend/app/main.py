@@ -1,20 +1,28 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents.fundamental.fundamental_agent import analyze_fundamentals
-from app.agents.news.web_search_agent import build_web_search_agent
+from app.agents.news.web_search_agent import build_web_search_agent, invoke_market_web_search
 from app.agents.supervisor.supervisor_agent import analyze_market_supervised
 from app.agents.technical.technical_chart_agent import analyze_stock_technical
+from app.guardrails import GuardrailViolation, ensure_market_query
 from app.services.document_ingestion import ingest_pdf_to_pgvector
 
 
 app = FastAPI(title="Market Analyst Agent API")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Load env vars from .env at app startup.
 # Support running uvicorn from repo root or from backend/ directory.
@@ -68,6 +76,15 @@ def _extract_agent_text(payload: Any) -> str:
         if output is not None:
             return str(output)
     return str(payload)
+
+
+@app.exception_handler(GuardrailViolation)
+async def guardrail_exception_handler(_: Request, exc: GuardrailViolation) -> JSONResponse:
+    logger.warning("Guardrail violation: %s", str(exc))
+    return JSONResponse(
+        status_code=422,
+        content={"error": "guardrail_violation", "message": str(exc)},
+    )
 
 
 class WebSearchRequest(BaseModel):
@@ -259,10 +276,12 @@ def run_web_search(payload: WebSearchRequest) -> WebSearchResponse:
     Minimal endpoint to exercise the web search agent.
     Expects: {"query": "..."}
     """
+    query = ensure_market_query(payload.query, field_name="query")
+    logger.info("API /agents/web-search")
     agent = get_web_search_agent()
-    result = agent.invoke({"messages": [{"role": "user", "content": payload.query}]})
+    result = invoke_market_web_search(agent, query)
     answer = _extract_agent_text(result)
-    return WebSearchResponse(query=payload.query, answer=answer)
+    return WebSearchResponse(query=query, answer=answer)
 
 
 @app.post("/agents/technical", response_model=TechnicalResponse)
@@ -271,6 +290,7 @@ def run_technical(payload: TechnicalRequest) -> TechnicalResponse:
     Minimal endpoint to exercise the technical analysis agent.
     Expects: {"symbol": "AAPL", "period": "3mo", "interval": "1d"}
     """
+    logger.info("API /agents/technical")
     result = analyze_stock_technical(payload.symbol, period=payload.period, interval=payload.interval)
     return TechnicalResponse(
         symbol=result.symbol,
@@ -286,6 +306,7 @@ def run_fundamental(payload: FundamentalRequest) -> FundamentalResponse:
     Agentic RAG over company-specific annual report chunks in pgvector.
     mode=auto -> general if no question, qa otherwise.
     """
+    logger.info("API /agents/fundamental")
     result = analyze_fundamentals(
         company=payload.company,
         question=payload.question,
@@ -306,6 +327,7 @@ def run_supervisor(payload: SupervisorRequest) -> SupervisorResponse:
     """
     Supervisor orchestration over technical + fundamental + news agents.
     """
+    logger.info("API /agents/supervisor")
     result = analyze_market_supervised(
         symbol=payload.symbol,
         company=payload.company,
@@ -339,6 +361,7 @@ async def ingest_document(
     """
     Upload a PDF and ingest it into pgvector.
     """
+    logger.info("API /agents/ingest")
     upload_dir = Path("data/uploads")
     upload_dir.mkdir(parents=True, exist_ok=True)
     safe_name = file.filename or "uploaded.pdf"

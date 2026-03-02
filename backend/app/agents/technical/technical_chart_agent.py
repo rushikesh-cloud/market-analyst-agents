@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import base64
+import logging
 import math
 import os
 from dataclasses import dataclass
@@ -14,6 +15,10 @@ import mplfinance as mpf
 
 from langchain_openai import AzureChatOpenAI
 from langchain.messages import HumanMessage
+
+from app.guardrails import ensure_stock_symbol
+
+logger = logging.getLogger(__name__)
 
 
 def _env(name: str) -> str:
@@ -32,6 +37,7 @@ class TechnicalAnalysisResult:
 
 
 def _fetch_price_data(symbol: str, period: str = "3mo", interval: str = "1d") -> pd.DataFrame:
+    logger.debug("Fetching technical data: symbol=%s period=%s interval=%s", symbol, period, interval)
     data = yf.download(symbol, period=period, interval=interval, auto_adjust=False, progress=False)
     if data.empty:
         raise ValueError(f"No data returned for symbol: {symbol}")
@@ -86,6 +92,7 @@ def _image_to_data_url(path: Path) -> str:
 
 
 def _vision_analyze(image_path: Path, symbol: str) -> str:
+    logger.debug("Running vision analysis for symbol=%s image=%s", symbol, image_path)
     llm = AzureChatOpenAI(
         azure_endpoint=_env("AZURE_OPENAI_ENDPOINT"),
         api_key=_env("AZURE_OPENAI_KEY"),
@@ -135,26 +142,34 @@ def _finite_or_none(value: Any) -> Optional[float]:
 
 
 def analyze_stock_technical(symbol: str, period: str = "3mo", interval: str = "1d") -> TechnicalAnalysisResult:
-    df = _fetch_price_data(symbol, period=period, interval=interval)
-    df = _add_indicators(df)
+    cleaned_symbol = ensure_stock_symbol(symbol)
+    logger.info("Starting technical analysis for symbol=%s", cleaned_symbol)
+    try:
+        df = _fetch_price_data(cleaned_symbol, period=period, interval=interval)
+        df = _add_indicators(df)
 
-    out_path = Path("data/processed") / f"{symbol}_technical.png"
-    _plot_chart(df, symbol, out_path)
+        out_path = Path("data/processed") / f"{cleaned_symbol}_technical.png"
+        _plot_chart(df, cleaned_symbol, out_path)
 
-    summary = _vision_analyze(out_path, symbol)
+        summary = _vision_analyze(out_path, cleaned_symbol)
 
-    latest = df.iloc[-1]
-    latest_values = {
-        "close": _finite_or_none(latest.get("Close")),
-        "rsi_14": _finite_or_none(latest.get("RSI_14")),
-        "macd": _finite_or_none(latest.get("MACD_12_26_9")),
-        "macd_signal": _finite_or_none(latest.get("MACDs_12_26_9")),
-        "macd_hist": _finite_or_none(latest.get("MACDh_12_26_9")),
-    }
+        latest = df.iloc[-1]
+        latest_values = {
+            "close": _finite_or_none(latest.get("Close")),
+            "rsi_14": _finite_or_none(latest.get("RSI_14")),
+            "macd": _finite_or_none(latest.get("MACD_12_26_9")),
+            "macd_signal": _finite_or_none(latest.get("MACDs_12_26_9")),
+            "macd_hist": _finite_or_none(latest.get("MACDh_12_26_9")),
+        }
+        logger.debug("Technical latest values for %s: %s", cleaned_symbol, latest_values)
+        logger.info("Completed technical analysis for symbol=%s", cleaned_symbol)
 
-    return TechnicalAnalysisResult(
-        symbol=symbol,
-        image_path=str(out_path),
-        summary=summary,
-        latest_values=latest_values,
-    )
+        return TechnicalAnalysisResult(
+            symbol=cleaned_symbol,
+            image_path=str(out_path),
+            summary=summary,
+            latest_values=latest_values,
+        )
+    except Exception:
+        logger.exception("Technical analysis failed for symbol=%s", cleaned_symbol)
+        raise

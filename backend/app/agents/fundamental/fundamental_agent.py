@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -10,6 +11,10 @@ from langchain.tools import tool
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_openai import AzureChatOpenAI
 from langchain_openai import AzureOpenAIEmbeddings
+
+from app.guardrails import ensure_market_query
+
+logger = logging.getLogger(__name__)
 
 
 def _env(name: str, default: Optional[str] = None) -> str:
@@ -128,6 +133,7 @@ def _build_fundamental_agent(
 ) -> tuple[Any, List[Any]]:
     vector_store = _get_vector_store(collection_name)
     llm = _build_llm()
+    logger.debug("Building fundamental agent for company=%s collection=%s top_k=%s", company, collection_name, top_k)
 
     retrieved_docs: List[Any] = []
 
@@ -136,13 +142,14 @@ def _build_fundamental_agent(
         """
         Retrieve relevant chunks for the given query from the specified company annual report.
         """
-        print("Company Retriever Tool Invoked with query:", query, company)
+        logger.info("Fundamental retriever invoked for company=%s", company)
+        logger.debug("Retriever query: %s", query)
         docs = vector_store.similarity_search(
             query,
             k=top_k,
             filter={"company": company},
         )
-        print(f"Retrieved {len(docs)} documents for query: {query}")
+        logger.debug("Retrieved %s documents for company=%s", len(docs), company)
         retrieved_docs.extend(docs)
         return _format_docs(docs)
 
@@ -172,56 +179,65 @@ def analyze_fundamentals(
     """
 
     mode = (mode or "auto").lower().strip()
-    if mode == "auto":
-        mode = "qa" if question and question.strip() else "general"
+    logger.info("Starting fundamental analysis: company=%s mode=%s collection=%s top_k=%s", company, mode, collection_name, top_k)
+    try:
+        if mode == "auto":
+            mode = "qa" if question and question.strip() else "general"
+        if question:
+            ensure_market_query(question, field_name="question")
 
-    agent, retrieved_docs = _build_fundamental_agent(
-        company=company,
-        collection_name=collection_name,
-        top_k=top_k,
-    )
+        agent, retrieved_docs = _build_fundamental_agent(
+            company=company,
+            collection_name=collection_name,
+            top_k=top_k,
+        )
 
-    if mode == "general":
+        if mode == "general":
+            prompt = (
+                f"Company: {company}\n\n"
+                "You need to provide a concise fundamental analysis. Use the tool multiple times "
+                "with targeted queries for:\n"
+                "- balance sheet\n"
+                "- income statement\n"
+                "- cash flow statement\n\n"
+                "Then respond with the following sections:\n"
+                "- Balance Sheet Summary\n"
+                "- Income Statement Summary\n"
+                "- Cash Flow Summary\n"
+                "- Overall Assessment\n"
+                "- Key Risks / Data Gaps\n"
+            )
+            response = agent.invoke(_to_agent_messages_input(prompt))
+            logger.debug("Fundamental general response payload type=%s", type(response).__name__)
+            answer = _extract_final_text(response)
+            logger.info("Completed fundamental general analysis for company=%s", company)
+
+            return FundamentalAnalysisResult(
+                mode="general",
+                company=company,
+                answer=answer,
+                sources=_sources_from_docs(retrieved_docs),
+            )
+
+        if not question or not question.strip():
+            raise ValueError("Question is required when mode is 'qa'.")
+
         prompt = (
-            f"Company: {company}\n\n"
-            "You need to provide a concise fundamental analysis. Use the tool multiple times "
-            "with targeted queries for:\n"
-            "- balance sheet\n"
-            "- income statement\n"
-            "- cash flow statement\n\n"
-            "Then respond with the following sections:\n"
-            "- Balance Sheet Summary\n"
-            "- Income Statement Summary\n"
-            "- Cash Flow Summary\n"
-            "- Overall Assessment\n"
-            "- Key Risks / Data Gaps\n"
+            f"Company: {company}\n"
+            f"Question: {question}\n\n"
+            "Use the retriever tool to get the most relevant chunks before answering."
         )
         response = agent.invoke(_to_agent_messages_input(prompt))
-        print(response)
+        logger.debug("Fundamental qa response payload type=%s", type(response).__name__)
         answer = _extract_final_text(response)
+        logger.info("Completed fundamental qa analysis for company=%s", company)
 
         return FundamentalAnalysisResult(
-            mode="general",
+            mode="qa",
             company=company,
             answer=answer,
             sources=_sources_from_docs(retrieved_docs),
         )
-
-    if not question or not question.strip():
-        raise ValueError("Question is required when mode is 'qa'.")
-
-    prompt = (
-        f"Company: {company}\n"
-        f"Question: {question}\n\n"
-        "Use the retriever tool to get the most relevant chunks before answering."
-    )
-    response = agent.invoke(_to_agent_messages_input(prompt))
-    print(response)
-    answer = _extract_final_text(response)
-
-    return FundamentalAnalysisResult(
-        mode="qa",
-        company=company,
-        answer=answer,
-        sources=_sources_from_docs(retrieved_docs),
-    )
+    except Exception:
+        logger.exception("Fundamental analysis failed for company=%s", company)
+        raise
